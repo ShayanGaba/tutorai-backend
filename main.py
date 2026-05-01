@@ -83,30 +83,29 @@ def chat(data: Message):
                 }
             }
         ]
+        # ✅ vision model can't handle mixed history, use fresh context
+        messages_to_send = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": user_message_content}
+        ]
+        model = "meta-llama/llama-4-scout-17b-16e-instruct"
     else:
         user_message_content = data.message
-
-    conversation_history.append({
-        "role": "user",
-        "content": user_message_content
-    })
-
-    # ✅ vision model for images, fast model for text
-    model = "meta-llama/llama-4-scout-17b-16e-instruct" if data.image_data else "llama-3.3-70b-versatile"
+        conversation_history.append({"role": "user", "content": user_message_content})
+        messages_to_send = [{"role": "system", "content": system}] + conversation_history
+        model = "llama-3.3-70b-versatile"
 
     response = client.chat.completions.create(
         model=model,
-        messages=[{"role": "system", "content": system}] + conversation_history,
+        messages=messages_to_send,
         max_tokens=1024,
         temperature=0.7,
     )
 
     reply = response.choices[0].message.content
 
-    conversation_history.append({
-        "role": "assistant",
-        "content": reply
-    })
+    if not data.image_data:
+        conversation_history.append({"role": "assistant", "content": reply})
 
     return {"reply": reply}
 
