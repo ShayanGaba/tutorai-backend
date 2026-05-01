@@ -8,19 +8,14 @@ import os
 
 app = FastAPI()
 
-@app.middleware("http")
-async def add_cors_headers(request: Request, call_next):
-    if request.method == "OPTIONS":
-        response = JSONResponse(content={}, status_code=200)
-        response.headers["Access-Control-Allow-Origin"] = "*"
-        response.headers["Access-Control-Allow-Methods"] = "*"
-        response.headers["Access-Control-Allow-Headers"] = "*"
-        return response
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+# ✅ USE THIS instead of custom middleware - FastAPI's official CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # or specify your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 conversation_history = []
@@ -55,7 +50,6 @@ class Message(BaseModel):
     message: str
     mode: str = "tutor"
     pdf_context: str = ""
-    # image_data = base64 string like "data:image/jpeg;base64,..."
     image_data: Optional[str] = None
 
 @app.get("/")
@@ -65,24 +59,18 @@ def home():
 @app.post("/chat")
 def chat(data: Message):
     system = MODES.get(data.mode, MODES["tutor"])
-    
+
     if data.pdf_context:
         system = f"You have access to this document:\n---\n{data.pdf_context}\n---\n" + system
 
-    # ── BUILD USER MESSAGE ─────────────────────────────────
-    # If image is attached, send as multimodal message
     if data.image_data:
-        # image_data comes as "data:image/jpeg;base64,XXXX..."
-        # We need to extract the media type and base64 data
         try:
             header, base64_str = data.image_data.split(",", 1)
-            # header looks like "data:image/jpeg;base64"
             media_type = header.split(":")[1].split(";")[0]
         except Exception:
             media_type = "image/jpeg"
             base64_str = data.image_data
 
-        # Multimodal message with both text and image
         user_message_content = [
             {
                 "type": "text",
@@ -96,18 +84,14 @@ def chat(data: Message):
             }
         ]
     else:
-        # Plain text message
         user_message_content = data.message
 
-    # Add to conversation history
     conversation_history.append({
         "role": "user",
         "content": user_message_content
     })
 
-    # ── CHOOSE MODEL ───────────────────────────────────────
-    # Use vision model when image is present
-    # llama-3.2-11b-vision-preview supports images on Groq
+    # ✅ vision model for images, fast model for text
     model = "llama-3.2-11b-vision-preview" if data.image_data else "llama-3.3-70b-versatile"
 
     response = client.chat.completions.create(
@@ -119,7 +103,6 @@ def chat(data: Message):
 
     reply = response.choices[0].message.content
 
-    # Save assistant reply to history
     conversation_history.append({
         "role": "assistant",
         "content": reply
