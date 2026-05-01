@@ -92,7 +92,7 @@ def chat(data: Message):
     })
 
     # ✅ vision model for images, fast model for text
-    model = "llama-3.2-11b-vision-preview" if data.image_data else "llama-3.3-70b-versatile"
+    model = "meta-llama/llama-4-scout-17b-16e-instruct" if data.image_data else "llama-3.3-70b-versatile"
 
     response = client.chat.completions.create(
         model=model,
