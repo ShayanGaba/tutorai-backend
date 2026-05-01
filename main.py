@@ -1,6 +1,5 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from groq import Groq
 from typing import Optional
@@ -8,10 +7,9 @@ import os
 
 app = FastAPI()
 
-# ✅ USE THIS instead of custom middleware - FastAPI's official CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or specify your frontend URL
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,27 +69,34 @@ def chat(data: Message):
             media_type = "image/jpeg"
             base64_str = data.image_data
 
-        user_message_content = [
-            {
-                "type": "text",
-                "text": data.message if data.message else "What do you see in this image? Describe and analyze it in detail."
-            },
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{media_type};base64,{base64_str}"
+        # send image with fresh context (vision model can't handle old multimodal history)
+        # but include recent TEXT-ONLY history so it has conversational context
+        text_only_history = [
+            m for m in conversation_history
+            if isinstance(m["content"], str)
+        ]
+
+        messages_to_send = (
+            [{"role": "system", "content": system}]
+            + text_only_history
+            + [{"role": "user", "content": [
+                {
+                    "type": "text",
+                    "text": data.message if data.message else "Describe and analyze this image in detail."
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{media_type};base64,{base64_str}"}
                 }
-            }
-        ]
-        # ✅ vision model can't handle mixed history, use fresh context
-        messages_to_send = [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user_message_content}
-        ]
+            ]}]
+        )
         model = "meta-llama/llama-4-scout-17b-16e-instruct"
+
     else:
-        user_message_content = data.message
-        conversation_history.append({"role": "user", "content": user_message_content})
+        conversation_history.append({
+            "role": "user",
+            "content": data.message
+        })
         messages_to_send = [{"role": "system", "content": system}] + conversation_history
         model = "llama-3.3-70b-versatile"
 
@@ -104,8 +109,17 @@ def chat(data: Message):
 
     reply = response.choices[0].message.content
 
-    if not data.image_data:
-        conversation_history.append({"role": "assistant", "content": reply})
+    # ✅ always save to history as plain text so ALL follow-ups work
+    if data.image_data:
+        conversation_history.append({
+            "role": "user",
+            "content": data.message if data.message else "[User shared an image]"
+        })
+
+    conversation_history.append({
+        "role": "assistant",
+        "content": reply
+    })
 
     return {"reply": reply}
 
