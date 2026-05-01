@@ -26,19 +26,16 @@ MODES = {
 - Ask follow-up questions to check understanding
 - Be warm, encouraging, patient
 - Format with clear structure""",
-
     "code": """You are CodeAI, an expert programmer.
 - Write clean, well-commented code
 - Explain WHY code works, not just what it does
 - Always use proper code blocks with language specified
 - Spot and fix bugs clearly""",
-
     "think": """You are ThinkAI, a deep analytical reasoner.
 - Think step by step through complex problems
 - Show your reasoning process
 - Be honest about uncertainty
 - Explore multiple perspectives""",
-
     "creative": """You are CreativeAI, an imaginative creative partner.
 - Generate unique, original ideas
 - Build on the user's ideas and make them better
@@ -80,27 +77,18 @@ def chat(data: Message):
             [{"role": "system", "content": system}]
             + text_only_history
             + [{"role": "user", "content": [
-                {
-                    "type": "text",
-                    "text": data.message if data.message else "Describe and analyze this image in detail."
-                },
-                {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{media_type};base64,{base64_str}"}
-                }
+                {"type": "text", "text": data.message if data.message else "Describe and analyze this image in detail."},
+                {"type": "image_url", "image_url": {"url": f"data:{media_type};base64,{base64_str}"}}
             ]}]
         )
         model = "meta-llama/llama-4-scout-17b-16e-instruct"
-
     else:
         conversation_history.append({"role": "user", "content": data.message})
         messages_to_send = [{"role": "system", "content": system}] + conversation_history
         model = "llama-3.3-70b-versatile"
 
-    # ✅ streaming generator
     def generate():
         full_reply = ""
-
         with client.chat.completions.stream(
             model=model,
             messages=messages_to_send,
@@ -111,21 +99,11 @@ def chat(data: Message):
                 delta = chunk.choices[0].delta.content
                 if delta:
                     full_reply += delta
-                    # send each chunk as SSE
                     yield f"data: {json.dumps({'chunk': delta})}\n\n"
 
-        # after streaming done, save to history
         if data.image_data:
-            conversation_history.append({
-                "role": "user",
-                "content": data.message if data.message else "[User shared an image]"
-            })
-        conversation_history.append({
-            "role": "assistant",
-            "content": full_reply
-        })
-
-        # signal done
+            conversation_history.append({"role": "user", "content": data.message if data.message else "[User shared an image]"})
+        conversation_history.append({"role": "assistant", "content": full_reply})
         yield f"data: {json.dumps({'done': True})}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream")
