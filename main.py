@@ -1,9 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from groq import Groq
 from typing import Optional
 import os
+import json
 
 app = FastAPI()
 
@@ -69,8 +71,6 @@ def chat(data: Message):
             media_type = "image/jpeg"
             base64_str = data.image_data
 
-        # send image with fresh context (vision model can't handle old multimodal history)
-        # but include recent TEXT-ONLY history so it has conversational context
         text_only_history = [
             m for m in conversation_history
             if isinstance(m["content"], str)
@@ -93,35 +93,42 @@ def chat(data: Message):
         model = "meta-llama/llama-4-scout-17b-16e-instruct"
 
     else:
-        conversation_history.append({
-            "role": "user",
-            "content": data.message
-        })
+        conversation_history.append({"role": "user", "content": data.message})
         messages_to_send = [{"role": "system", "content": system}] + conversation_history
         model = "llama-3.3-70b-versatile"
 
-    response = client.chat.completions.create(
-        model=model,
-        messages=messages_to_send,
-        max_tokens=1024,
-        temperature=0.7,
-    )
+    # ✅ streaming generator
+    def generate():
+        full_reply = ""
 
-    reply = response.choices[0].message.content
+        with client.chat.completions.stream(
+            model=model,
+            messages=messages_to_send,
+            max_tokens=1024,
+            temperature=0.7,
+        ) as stream:
+            for chunk in stream:
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    full_reply += delta
+                    # send each chunk as SSE
+                    yield f"data: {json.dumps({'chunk': delta})}\n\n"
 
-    # ✅ always save to history as plain text so ALL follow-ups work
-    if data.image_data:
+        # after streaming done, save to history
+        if data.image_data:
+            conversation_history.append({
+                "role": "user",
+                "content": data.message if data.message else "[User shared an image]"
+            })
         conversation_history.append({
-            "role": "user",
-            "content": data.message if data.message else "[User shared an image]"
+            "role": "assistant",
+            "content": full_reply
         })
 
-    conversation_history.append({
-        "role": "assistant",
-        "content": reply
-    })
+        # signal done
+        yield f"data: {json.dumps({'done': True})}\n\n"
 
-    return {"reply": reply}
+    return StreamingResponse(generate(), media_type="text/event-stream")
 
 @app.post("/reset")
 def reset():
